@@ -103,4 +103,5 @@ SELECT
   t.$2,
   t.$3
 FROM @REVIEW_STAGE (FILE_FORMAT => HOL_CSV_FORMAT) t
-WHERE REGEXP_LIKE(METADATA$FILENAME, '.*review_table_.*\\.csv$');
+WHERE REGEXP_LIKE(METADATA$FILENAME, '.*review_table__.*\\.csv$');
+
