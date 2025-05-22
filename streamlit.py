@@ -15,6 +15,13 @@ st.set_page_config(
 st.title('📊 Review Analysis Dashboard')
 st.markdown('Explore the relationships between review quality, sentiment, and purchase decisions.')
 
+# Create bins for sentiment 
+# Define sentiment order globally at the top of the script
+sentiment_order = ['Very Negative', 'Negative', 'Neutral', 'Positive', 'Very Positive']
+
+# Filter section
+st.sidebar.header("Filters")
+
 # Get Snowflake session
 session = get_active_session()
 
@@ -47,13 +54,6 @@ def load_data():
 with st.spinner("Loading data from Snowflake..."):
     df = load_data()
 
-# Create bins for sentiment 
-# Define sentiment order globally at the top of the script
-sentiment_order = ['Very Negative', 'Negative', 'Neutral', 'Positive', 'Very Positive']
-
-# Filter section
-st.sidebar.header("Filters")
-
 # Product Type filter
 product_types = ["All"] + sorted(df["PRODUCT_TYPE"].unique().tolist())
 selected_product_type = st.sidebar.selectbox("Product Type", product_types)
@@ -74,6 +74,17 @@ if selected_layout != "All":
     filtered_df = filtered_df[filtered_df["PRODUCT_LAYOUT"] == selected_layout]
 if selected_quality != "All":
     filtered_df = filtered_df[filtered_df["REVIEW_QUALITY"] == selected_quality]
+
+# Add debug info to help identify issues
+st.sidebar.write("---")
+st.sidebar.subheader("Data Statistics")
+st.sidebar.write(f"Total reviews in current selection: {len(filtered_df)}")
+
+# Count occurrences of each review quality
+quality_counts = filtered_df["REVIEW_QUALITY"].value_counts().reset_index()
+quality_counts.columns = ["Review Quality", "Count"]
+st.sidebar.write("Review Quality Counts:")
+st.sidebar.dataframe(quality_counts)
 
 # Display data metrics in top row
 st.header("Overview Metrics")
@@ -106,9 +117,20 @@ with col1:
     st.subheader("Review Quality vs. Purchase Rate")
     
     # Group by Review Quality and calculate purchase rate
-    quality_purchase = filtered_df.groupby("REVIEW_QUALITY")["PURCHASE_DECISION"].agg(
-        ["mean", "count"]
+    quality_purchase = filtered_df.groupby("REVIEW_QUALITY").agg(
+        mean=("PURCHASE_DECISION", "mean"),
+        count=("PURCHASE_DECISION", "count")
     ).reset_index()
+
+    # Ensure no missing data
+    for quality in filtered_df["REVIEW_QUALITY"].unique():
+        if quality not in quality_purchase["REVIEW_QUALITY"].values:
+            # Add missing quality with 0 values
+            quality_purchase = pd.concat([
+                quality_purchase,
+                pd.DataFrame({"REVIEW_QUALITY": [quality], "mean": [0], "count": [0]})
+            ])
+
     quality_purchase["mean"] = quality_purchase["mean"] * 100  # Convert to percentage
     
     # Create bar chart
@@ -152,10 +174,32 @@ with col2:
     )
     
     # Group by sentiment bins
-    sentiment_purchase = filtered_df.groupby("Sentiment_Bin")["PURCHASE_DECISION"].agg(
-        ["mean", "count"]
+    sentiment_purchase = filtered_df.groupby("Sentiment_Bin").agg(
+        mean=("PURCHASE_DECISION", "mean"),
+        count=("PURCHASE_DECISION", "count")
     ).reset_index()
-    sentiment_purchase["mean"] = sentiment_purchase["mean"] * 100  # Convert to percentage
+
+    # Ensure all sentiment bins exist in the result
+    for sentiment in sentiment_order:
+        if sentiment not in sentiment_purchase["Sentiment_Bin"].values:
+            # Add missing sentiment with 0 values
+            sentiment_purchase = pd.concat([
+                sentiment_purchase,
+                pd.DataFrame({"Sentiment_Bin": [sentiment], "mean": [0], "count": [0]})
+            ])
+
+    # Convert to percentage
+    sentiment_purchase["mean"] = sentiment_purchase["mean"] * 100
+
+    # Ensure categorical order is maintained
+    sentiment_purchase["Sentiment_Bin"] = pd.Categorical(
+        sentiment_purchase["Sentiment_Bin"],
+        categories=sentiment_order,
+        ordered=True
+    )
+
+    # Sort by the categorical order
+    sentiment_purchase = sentiment_purchase.sort_values("Sentiment_Bin")
     
     # Create bar chart
     # Define sentiment order
@@ -281,8 +325,13 @@ with st.expander("Detailed Analysis by Product Type"):
     # Create a chart showing purchase decision by product type and review quality
     product_quality_purchase = filtered_df.groupby(
         ["PRODUCT_TYPE", "REVIEW_QUALITY"]
-    )["PURCHASE_DECISION"].mean().reset_index()
-    product_quality_purchase["Purchase_Rate"] = product_quality_purchase["PURCHASE_DECISION"] * 100
+    ).agg(
+        Purchase_Rate=("PURCHASE_DECISION", "mean"),
+        count=("PURCHASE_DECISION", "count")
+    ).reset_index()
+    
+    # Convert to percentage
+    product_quality_purchase["Purchase_Rate"] = product_quality_purchase["Purchase_Rate"] * 100
     
     # Get unique product types to maintain a consistent order
     product_types = sorted(filtered_df["PRODUCT_TYPE"].unique())
@@ -295,12 +344,11 @@ with st.expander("Detailed Analysis by Product Type"):
     chart4 = alt.Chart(product_quality_purchase).mark_bar().encode(
         x=alt.X('PRODUCT_TYPE:N', title='Product Type', sort=None),
         y=alt.Y('Purchase_Rate:Q', title='Purchase Rate (%)'),
-        color='REVIEW_QUALITY:N',
-        column='REVIEW_QUALITY:N',
+        color=alt.Color('REVIEW_QUALITY:N', title='Review Quality'),
         tooltip=['PRODUCT_TYPE', 'REVIEW_QUALITY', alt.Tooltip('Purchase_Rate:Q', format='.1f')]
     ).properties(
         title='Purchase Rate by Product Type and Review Quality',
-        width=150
+        height=400
     )
     
     st.altair_chart(chart4, use_container_width=True)
